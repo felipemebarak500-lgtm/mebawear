@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Registro - Meba</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="login-logo">
+        <span>🔥</span>
+        <span>Meba</span>
+      </div>
+
+      <h1 class="login-title">Crear cuenta</h1>
+      <p class="login-subtitle">Registro solo por invitación.</p>
+
+      <form class="login-form" action="/register" method="POST">
+        <input type="hidden" name="token" id="token-input" />
+
+        <div class="login-field">
+          <label class="login-label" for="username">Usuario</label>
+          <input
+            class="login-input"
+            type="text"
+            id="username"
+            name="username"
+            placeholder="Elige un usuario"
+            required
+          />
+        </div>
+
+        <div class="login-field">
+          <label class="login-label" for="password">Contraseña</label>
+          <input
+            class="login-input"
+            type="password"
+            id="password"
+            name="password"
+            placeholder="Elige una contraseña"
+            required
+          />
+        </div>
+
+        <button class="login-button" type="submit">
+          Registrarme
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Leer token de la URL y pasarlo al input hidden
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    document.getElementById("token-input").value = token || "";
+  </script>
+</body>
+</html>

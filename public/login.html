@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Iniciar sesión - Meba</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="login-logo">
+        <span>🔥</span>
+        <span>Meba</span>
+      </div>
+
+      <h1 class="login-title">Inicia sesión</h1>
+      <p class="login-subtitle">
+        Accede al panel principal de Meba y gestiona tu Spartan Drop.
+      </p>
+
+      <form class="login-form" action="/login" method="POST">
+        <div class="login-field">
+          <label class="login-label" for="username">Usuario</label>
+          <input
+            class="login-input"
+            type="text"
+            id="username"
+            name="username"
+            placeholder="Tu usuario"
+            required
+          />
+        </div>
+
+        <div class="login-field">
+          <label class="login-label" for="password">Contraseña</label>
+          <input
+            class="login-input"
+            type="password"
+            id="password"
+            name="password"
+            placeholder="Tu contraseña"
+            required
+          />
+        </div>
+
+        <button class="login-button" type="submit">
+          Entrar
+        </button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

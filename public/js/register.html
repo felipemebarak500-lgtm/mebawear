@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Registro - Meba</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="login-logo">
+        <span>🔥</span>
+        <span>Meba</span>
+      </div>
+
+      <h1 class="login-title">Crea tu cuenta</h1>
+      <p class="login-subtitle">
+        Estás accediendo mediante un enlace de invitación. Crea tu usuario para entrar al Spartan Drop.
+      </p>
+
+      <form class="login-form" action="/register" method="POST">
+        <div class="login-field">
+          <label class="login-label" for="username">Usuario</label>
+          <input
+            class="login-input"
+            type="text"
+            id="username"
+            name="username"
+            placeholder="Elige tu usuario"
+            required
+          />
+        </div>
+
+        <div class="login-field">
+          <label class="login-label" for="password">Contraseña</label>
+          <input
+            class="login-input"
+            type="password"
+            id="password"
+            name="password"
+            placeholder="Elige una contraseña"
+            required
+          />
+        </div>
+
+        <!-- el código de invitación viene en la URL -->
+        <input type="hidden" id="invite_code" name="code" />
+
+        <button class="login-button" type="submit">
+          Crear cuenta
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // lee ?code=XYZ de la URL y lo coloca en el input hidden
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    document.getElementById("invite_code").value = code || "";
+  </script>
+</body>
+</html>
