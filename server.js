@@ -1,507 +1,289 @@
-// server.js - MebaWear / Meba tienda exclusiva
-// Listo para Render (usa process.env.PORT) y SQLite
+// server.js
+// Backend para Mebawear – usando better-sqlite3 (compatible con Render)
 
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
-const bodyParser = require("body-parser");
 const session = require("express-session");
-const nodemailer = require("nodemailer");
+const bodyParser = require("body-parser");
+const Database = require("better-sqlite3"); // <-- reemplaza sqlite3
 
+// ------------------ CONFIG BÁSICA ------------------
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// -------------------- CONFIG BÁSICA --------------------
+// Base de datos SQLite
+const db = new Database(path.join(__dirname, "db.sqlite"));
 
-// DB en archivo local
-const db = new sqlite3.Database("db.sqlite");
-
-// Body parsers
+// Middleware
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// Sesiones (MemoryStore, suficiente para proyecto pequeño)
+// Sesiones (para login)
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "meba-secret-session",
+    secret: "mebawear_super_secret_key",
     resave: false,
     saveUninitialized: false,
   })
 );
 
-// Rutas estáticas: TODO el proyecto está en la misma carpeta
-// (index.html, login.html, styles.css, img/, etc.)
-app.use("/img", express.static(path.join(__dirname, "img")));
-app.use("/favicon.ico", express.static(path.join(__dirname, "favicon.ico")));
-app.use("/static", express.static(__dirname)); // por si tienes rutas relativas raras
+// Rutas estáticas
+app.use(express.static(path.join(__dirname, "public")));
 
-// -------------------- MIDDLEWARES --------------------
+// ------------------ TABLAS ------------------
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password TEXT,
+    email TEXT,
+    phone TEXT
+  )
+`).run();
 
-function requireAuth(req, res, next) {
-  if (!req.session.userId) {
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE,
+    used INTEGER DEFAULT 0
+  )
+`).run();
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    price INTEGER,
+    description TEXT,
+    category TEXT,
+    image TEXT,
+    is_available INTEGER DEFAULT 1
+  )
+`).run();
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    product_id INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+
+// Semilla básica de productos (siempre habrá solo 2)
+const countProducts = db.prepare("SELECT COUNT(*) as c FROM products").get().c;
+if (countProducts === 0) {
+  const insertProd = db.prepare(`
+    INSERT INTO products (name, price, description, category, image, is_available)
+    VALUES (?, ?, ?, ?, ?, 1)
+  `);
+
+  insertProd.run(
+    "Hoodie negro/oro Edición Limitada",
+    390000,
+    "Buzo premium en tela gruesa, bordado dorado de alta calidad y triángulo azul celeste distintivo.",
+    "Hoodies",
+    "/img/hoodie_oro.png"
+  );
+
+  insertProd.run(
+    "Gorra negro/oro IMI Edición Limitada",
+    230000,
+    "Gorra negra con bordado dorado IMI, edición especial limitada.",
+    "Gorras",
+    "/img/gorra_oro.png"
+  );
+
+  console.log("✔ Productos iniciales creados");
+}
+
+// Semilla de invitación de ejemplo (para que puedas probar)
+const countInvites = db.prepare("SELECT COUNT(*) as c FROM invites").get().c;
+if (countInvites === 0) {
+  db.prepare("INSERT INTO invites (code, used) VALUES (?, 0)").run("INVITE-MEBA-001");
+  console.log("✔ Código de invitación inicial: INVITE-MEBA-001");
+}
+
+// ------------------ MIDDLEWARE DE SESIÓN ------------------
+function requireLogin(req, res, next) {
+  if (!req.session.user) {
     return res.redirect("/login.html");
   }
   next();
 }
 
-// -------------------- INICIALIZACIÓN DB --------------------
+// ------------------ RUTAS DE VISTAS ------------------
 
-db.serialize(() => {
-  // Tabla de usuarios
-  db.run(
-    `CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE,
-      password TEXT,
-      email TEXT,
-      phone TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )`
-  );
-
-  // Tabla de invitaciones (registro solo con código)
-  db.run(
-    `CREATE TABLE IF NOT EXISTS invites (
-      code TEXT PRIMARY KEY,
-      used INTEGER DEFAULT 0,
-      used_by INTEGER,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )`
-  );
-
-  // Tabla de productos
-  db.run(
-    `CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      price_cop INTEGER,
-      description TEXT,
-      category TEXT,
-      image TEXT,
-      is_available INTEGER DEFAULT 1
-    )`
-  );
-
-  // Tabla de compras
-  db.run(
-    `CREATE TABLE IF NOT EXISTS purchases (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      product_id INTEGER,
-      status TEXT DEFAULT 'confirmada',
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )`
-  );
-
-  // Crear admin si no existe
-  db.get(
-    "SELECT id FROM users WHERE username = ?",
-    ["admin"],
-    (err, row) => {
-      if (err) {
-        console.error("Error verificando admin:", err);
-        return;
-      }
-      if (!row) {
-        db.run(
-          "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
-          ["admin", "baloo1221", "admin@mebawear.com", "0000000000"],
-          (e) => {
-            if (e) {
-              console.error("Error creando admin:", e);
-            } else {
-              console.log("✔ Usuario admin creado (admin / baloo1221)");
-            }
-          }
-        );
-      } else {
-        console.log("✔ Admin ya existe");
-      }
-    }
-  );
-
-  // Crear invitaciones si no hay
-  db.all("SELECT code FROM invites", (err, rows) => {
-    if (err) {
-      console.error("Error leyendo invites:", err);
-      return;
-    }
-    if (!rows || rows.length === 0) {
-      const invites = ["MEBA-ALPHA-01", "MEBA-BETA-02"];
-      const stmt = db.prepare("INSERT INTO invites (code) VALUES (?)");
-      invites.forEach((code) => stmt.run(code));
-      stmt.finalize();
-      console.log("✔ Invites creados:", invites.join(", "));
-    } else {
-      console.log(`✔ INVITES ya tiene ${rows.length} códigos.`);
-    }
-  });
-
-  // Crear productos si no hay
-  db.all("SELECT id FROM products", (err, rows) => {
-    if (err) {
-      console.error("Error leyendo productos:", err);
-      return;
-    }
-    if (!rows || rows.length === 0) {
-      const stmt = db.prepare(
-        "INSERT INTO products (name, price_cop, description, category, image, is_available) VALUES (?, ?, ?, ?, ?, ?)"
-      );
-
-      // Hoodie
-      stmt.run(
-        "Hoodie negro/oro Edición Limitada",
-        390000,
-        "Buzo premium en tela gruesa, bordado dorado de alta calidad y triángulo azul celeste distintivo.",
-        "Hoodies",
-        "/img/hoodie_oro.png",
-        1
-      );
-
-      // Gorra
-      stmt.run(
-        "Gorra negro/oro IMI Edición Limitada",
-        230000,
-        "Gorra exclusiva negra con detalles dorados IMI, pensada para drops de edición limitada.",
-        "Gorras",
-        "/img/gorra_oro.png",
-        1
-      );
-
-      stmt.finalize();
-      console.log("✔ PRODUCTS iniciales creados (hoodie + gorra).");
-    } else {
-      console.log(`✔ PRODUCTS ya tiene ${rows.length} productos.`);
-    }
-  });
-
-  // Contar usuarios
-  db.all("SELECT id FROM users", (err, rows) => {
-    if (!err && rows) {
-      console.log(`✔ USERS ya tiene ${rows.length} usuarios.`);
-    }
-  });
-});
-
-// -------------------- EMAIL (OPCIONAL) --------------------
-
-let mailTransport = null;
-
-function setupMail() {
-  const { MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASS } = process.env;
-  if (!MAIL_HOST || !MAIL_PORT || !MAIL_USER || !MAIL_PASS) {
-    console.log(
-      "ℹ No se configuró MAIL_HOST/PORT/USER/PASS. No se enviarán correos, solo se registrarán en logs."
-    );
-    return;
-  }
-
-  mailTransport = nodemailer.createTransport({
-    host: MAIL_HOST,
-    port: Number(MAIL_PORT),
-    secure: false,
-    auth: {
-      user: MAIL_USER,
-      pass: MAIL_PASS,
-    },
-  });
-
-  mailTransport.verify((err, ok) => {
-    if (err) {
-      console.error("❌ Error verificando transporte de correo:", err);
-      mailTransport = null;
-    } else {
-      console.log("✔ Transporte de correo listo.");
-    }
-  });
-}
-
-setupMail();
-
-function sendPurchaseEmail({ user, product, purchaseId }) {
-  const to = process.env.MAIL_TO || process.env.MAIL_USER;
-
-  if (!mailTransport || !to) {
-    console.log(
-      "ℹ Compra registrada, pero MAIL_* no está configurado. No se envió correo.",
-      { user, product, purchaseId }
-    );
-    return;
-  }
-
-  const subject = `Nueva compra en MebaWear: ${product.name}`;
-  const text = `
-Nueva compra confirmada en MebaWear.
-
-Usuario:
-- ID: ${user.id}
-- Usuario: ${user.username}
-- Email: ${user.email || "N/A"}
-- Teléfono: ${user.phone || "N/A"}
-
-Producto:
-- ID: ${product.id}
-- Nombre: ${product.name}
-- Precio: $${product.price_cop.toLocaleString("es-CO")} COP
-
-ID de compra: ${purchaseId}
-`;
-
-  mailTransport.sendMail(
-    {
-      from: `MebaWear <${process.env.MAIL_USER}>`,
-      to,
-      subject,
-      text,
-    },
-    (err, info) => {
-      if (err) {
-        console.error("❌ Error enviando correo de compra:", err);
-      } else {
-        console.log("✔ Correo de compra enviado:", info.messageId);
-      }
-    }
-  );
-}
-
-// -------------------- RUTAS DE VISTAS --------------------
-
-// Siempre que alguien vaya a "/", lo mandamos al login
+// Siempre que entren a / se va al login
 app.get("/", (req, res) => {
-  return res.redirect("/login.html");
+  res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
-// Proteger index (home) para que solo entre logueado
-app.get("/index.html", requireAuth, (req, res) => {
-  return res.sendFile(path.join(__dirname, "index.html"));
+// Protegemos index.html para que solo se vea logueado
+app.get("/index.html", requireLogin, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Registro solo con invitación (vista)
+// Registro por invitación (página)
 app.get("/register.html", (req, res) => {
-  return res.sendFile(path.join(__dirname, "register.html"));
+  res.sendFile(path.join(__dirname, "public", "register.html"));
 });
 
-// Login (vista)
-app.get("/login.html", (req, res) => {
-  return res.sendFile(path.join(__dirname, "login.html"));
-});
+// ------------------ AUTENTICACIÓN ------------------
 
-// Servir el resto de archivos estáticos (styles.css, script.js, etc.)
-app.use(express.static(__dirname));
-
-// -------------------- RUTAS DE AUTENTICACIÓN --------------------
-
-// Login
+// POST /login
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).send("Faltan datos.");
-  }
+  try {
+    const stmt = db.prepare(
+      "SELECT * FROM users WHERE username = ? AND password = ?"
+    );
+    const user = stmt.get(username, password);
 
-  db.get(
-    "SELECT * FROM users WHERE username = ? AND password = ?",
-    [username, password],
-    (err, user) => {
-      if (err) {
-        console.error("❌ Error DB en login:", err);
-        return res.status(500).send("Error interno.");
-      }
-
-      if (!user) {
-        return res
-          .status(401)
-          .send("Usuario o contraseña incorrectos. Inténtalo de nuevo.");
-      }
-
-      // Guardar datos mínimos en sesión
-      req.session.userId = user.id;
-      req.session.username = user.username;
-      req.session.email = user.email;
-      req.session.phone = user.phone;
-
-      console.log("✔ Login correcto:", user.username);
-      return res.redirect("/index.html");
+    if (!user) {
+      return res.status(401).send("Usuario o contraseña incorrectos");
     }
-  );
+
+    req.session.user = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      phone: user.phone,
+    };
+
+    return res.redirect("/index.html");
+  } catch (err) {
+    console.error("❌ Error en /login:", err);
+    return res.status(500).send("Error interno");
+  }
 });
 
-// Logout
+// GET /logout
 app.get("/logout", (req, res) => {
   req.session.destroy(() => {
     res.redirect("/login.html");
   });
 });
 
-// Registro con invitación
+// POST /register (con código de invitación)
 app.post("/register", (req, res) => {
-  const { username, password, email, phone, inviteCode } = req.body;
+  const { username, password, email, phone, invite_code } = req.body;
 
-  if (!username || !password || !inviteCode) {
-    return res.status(400).send("Faltan datos obligatorios.");
-  }
+  try {
+    // Verificamos el código de invitación
+    const invite = db
+      .prepare("SELECT * FROM invites WHERE code = ? AND used = 0")
+      .get(invite_code);
 
-  db.get(
-    "SELECT code, used FROM invites WHERE code = ?",
-    [inviteCode],
-    (err, invite) => {
-      if (err) {
-        console.error("❌ Error buscando invitación:", err);
-        return res.status(500).send("Error interno.");
-      }
-
-      if (!invite) {
-        return res.status(400).send("Código de invitación inválido.");
-      }
-
-      if (invite.used) {
-        return res.status(400).send("Este código de invitación ya fue usado.");
-      }
-
-      // Crear usuario
-      db.run(
-        "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)",
-        [username, password, email || null, phone || null],
-        function (err2) {
-          if (err2) {
-            if (err2.message.includes("UNIQUE")) {
-              return res
-                .status(400)
-                .send("Ese nombre de usuario ya está en uso.");
-            }
-            console.error("❌ Error creando usuario:", err2);
-            return res.status(500).send("Error interno.");
-          }
-
-          const newUserId = this.lastID;
-
-          // Marcar invitación como usada
-          db.run(
-            "UPDATE invites SET used = 1, used_by = ? WHERE code = ?",
-            [newUserId, inviteCode],
-            (err3) => {
-              if (err3) {
-                console.error(
-                  "❌ Error marcando invitación como usada:",
-                  err3
-                );
-              }
-              console.log(
-                `✔ Nuevo usuario registrado (${username}) con código ${inviteCode}`
-              );
-              return res.redirect("/login.html");
-            }
-          );
-        }
-      );
+    if (!invite) {
+      return res.status(400).send("Código de invitación no válido o ya usado.");
     }
-  );
+
+    const insertUser = db.prepare(`
+      INSERT INTO users (username, password, email, phone)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    insertUser.run(username, password, email, phone);
+
+    // Marcamos la invitación como usada
+    db.prepare("UPDATE invites SET used = 1 WHERE id = ?").run(invite.id);
+
+    res.redirect("/login.html");
+  } catch (err) {
+    console.error("❌ Error en /register:", err);
+    if (String(err).includes("UNIQUE constraint failed")) {
+      return res.status(400).send("Ese usuario ya existe.");
+    }
+    return res.status(500).send("Error interno.");
+  }
 });
 
-// -------------------- API DE PRODUCTOS --------------------
+// ------------------ API DE PRODUCTOS ------------------
 
-// Lista de productos disponibles
+// Obtener productos disponibles
 app.get("/api/products", (req, res) => {
-  db.all(
-    "SELECT id, name, price_cop, description, category, image, is_available FROM products",
-    (err, rows) => {
-      if (err) {
-        console.error("❌ Error leyendo productos:", err);
-        return res.status(500).json({ error: "Error interno" });
-      }
-      res.json(rows);
-    }
-  );
+  try {
+    const rows = db
+      .prepare("SELECT * FROM products WHERE is_available = 1")
+      .all();
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error en GET /api/products:", err);
+    res.status(500).json({ error: "Error interno" });
+  }
 });
 
-// Compra de producto (deshabilita producto y registra compra)
-app.post("/api/purchase", requireAuth, (req, res) => {
-  const { productId } = req.body;
-  const userId = req.session.userId;
+// Obtener todos los productos (ej. para panel admin, si luego lo necesitas)
+app.get("/api/products/all", (req, res) => {
+  try {
+    const rows = db.prepare("SELECT * FROM products").all();
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error en GET /api/products/all:", err);
+    res.status(500).json({ error: "Error interno" });
+  }
+});
 
-  if (!productId) {
-    return res.status(400).json({ error: "Falta productId" });
+// ------------------ COMPRA DE PRODUCTO ------------------
+
+// POST /api/purchase
+app.post("/api/purchase", (req, res) => {
+  const { productId } = req.body;
+  const userSession = req.session.user;
+
+  if (!userSession) {
+    return res.status(401).json({ error: "No has iniciado sesión." });
   }
 
-  // Verificar que el producto existe y está disponible
-  db.get(
-    "SELECT * FROM products WHERE id = ?",
-    [productId],
-    (err, product) => {
-      if (err) {
-        console.error("❌ Error buscando producto:", err);
-        return res.status(500).json({ error: "Error interno" });
-      }
+  try {
+    const product = db
+      .prepare("SELECT * FROM products WHERE id = ?")
+      .get(productId);
 
-      if (!product) {
-        return res.status(404).json({ error: "Producto no encontrado" });
-      }
-
-      if (!product.is_available) {
-        return res
-          .status(400)
-          .json({ error: "Este producto ya no está disponible." });
-      }
-
-      // Insertar compra
-      db.run(
-        "INSERT INTO purchases (user_id, product_id, status) VALUES (?, ?, ?)",
-        [userId, productId, "confirmada"],
-        function (err2) {
-          if (err2) {
-            console.error("❌ Error registrando compra:", err2);
-            return res.status(500).json({ error: "Error interno" });
-          }
-
-          const purchaseId = this.lastID;
-
-          // Deshabilitar producto
-          db.run(
-            "UPDATE products SET is_available = 0 WHERE id = ?",
-            [productId],
-            (err3) => {
-              if (err3) {
-                console.error("❌ Error deshabilitando producto:", err3);
-              }
-
-              // Obtener datos del usuario para el correo
-              db.get(
-                "SELECT id, username, email, phone FROM users WHERE id = ?",
-                [userId],
-                (err4, user) => {
-                  if (err4) {
-                    console.error("❌ Error leyendo usuario para correo:", err4);
-                  } else if (user) {
-                    // Enviar correo (si está configurado)
-                    sendPurchaseEmail({
-                      user,
-                      product,
-                      purchaseId,
-                    });
-                  }
-
-                  console.log(
-                    `✔ Compra confirmada. Usuario ${userId} compró producto ${productId} (compra #${purchaseId}).`
-                  );
-
-                  return res.json({
-                    ok: true,
-                    message:
-                      "Gracias por tu compra. El producto ha sido reservado para ti y ya no aparece disponible.",
-                  });
-                }
-              );
-            }
-          );
-        }
-      );
+    if (!product) {
+      return res.status(404).json({ error: "Producto no encontrado." });
     }
-  );
+
+    if (product.is_available === 0) {
+      return res
+        .status(400)
+        .json({ error: "Este producto ya no está disponible." });
+    }
+
+    const update = db.prepare(
+      "UPDATE products SET is_available = 0 WHERE id = ? AND is_available = 1"
+    );
+    const result = update.run(productId);
+
+    if (result.changes === 0) {
+      return res
+        .status(400)
+        .json({ error: "Este producto ya fue comprado por otro usuario." });
+    }
+
+    db.prepare(
+      "INSERT INTO purchases (user_id, product_id) VALUES (?, ?)"
+    ).run(userSession.id, productId);
+
+    // Si más adelante configuramos SMTP, aquí dispararemos el correo
+    console.log(
+      `📩 Nueva compra: usuario ${userSession.username} (id=${userSession.id}) compró producto ${product.name} (id=${product.id})`
+    );
+
+    return res.json({
+      success: true,
+      message:
+        "Gracias por tu compra. Pronto el dueño de la tienda se pondrá en contacto contigo por WhatsApp.",
+    });
+  } catch (err) {
+    console.error("❌ Error en POST /api/purchase:", err);
+    return res.status(500).json({ error: "Error interno." });
+  }
 });
 
-// -------------------- ARRANQUE DEL SERVIDOR --------------------
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+// ------------------ ARRANQUE ------------------
+app.listen(PORT, () => {
+  console.log(`✅ Servidor Mebawear escuchando en http://localhost:${PORT}`);
 });
