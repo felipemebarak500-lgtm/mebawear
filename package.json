@@ -1,19 +1,23 @@
 {
   "name": "mebawear",
   "version": "1.0.0",
-  "description": "Meba wear - tienda exclusiva de hoodies y gorras edicion limitada",
+  "description": "Tienda web Mebawear",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "npm rebuild better-sqlite3 --build-from-source"
   },
-  "engines": {
-    "node": "18.x"
-  },
+  "keywords": [],
+  "author": "Juan Mebarak",
+  "license": "MIT",
   "dependencies": {
-    "better-sqlite3": "^12.5.0",
-    "body-parser": "^1.20.3",
-    "express": "^4.19.2",
-    "express-session": "^1.18.0",
-    "nodemailer": "^6.9.15"
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^9.4.0",
+    "body-parser": "^1.20.2",
+    "cookie-session": "^2.0.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.4",
+    "path": "^0.12.7"
   }
 }
